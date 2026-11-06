@@ -1,0 +1,20 @@
+{
+  "name": "studio-manager-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Studio Manager, gestionale per studio di registrazione",
+  "author": "Studio Manager",
+  "main": "main.cjs",
+  "scripts": { "start": "electron .", "dist": "electron-builder --publish never" },
+  "devDependencies": { "electron": "^33.0.0", "electron-builder": "^25.1.8" },
+  "build": {
+    "appId": "it.studiomanager.app",
+    "productName": "Studio Manager",
+    "directories": { "output": "release", "buildResources": "build" },
+    "files": ["main.cjs", "package.json", "app/**/*"],
+    "artifactName": "StudioManager-${version}-${os}-${arch}.${ext}",
+    "mac": { "category": "public.app-category.business", "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }] },
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false }
+  }
+}

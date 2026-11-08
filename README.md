@@ -41,3 +41,13 @@ I dati restano **nel browser (o nell'app) del dispositivo che usi**: non passano
 - Le fatture in PDF sono **copie di cortesia**: non sostituiscono la fattura elettronica da inviare tramite SDI.
 - I coefficienti di assorbimento dei materiali sono **indicativi**: per un progetto vero usa i valori certificati dei prodotti.
 - Non ci sono account né permessi: chi apre l'app vede tutto.
+
+## Sincronizzazione tra dispositivi
+Apri il pallino in alto ("Dati solo su questo dispositivo") → Sincronizzazione.
+1. Su GitHub: Settings → Developer settings → Personal access tokens (classic) → nuovo token con il solo permesso **gist**.
+2. Incolla il token nell'app e premi "Collega e invia i dati": i dati vanno in un Gist privato del tuo account.
+3. Sugli altri dispositivi: "Copia il link" dal primo e aprilo, oppure incolla il codice in "Ho già un altro dispositivo collegato".
+Le modifiche partono da sole pochi secondi dopo ogni salvataggio e si scaricano quando riapri l'app. Il token resta solo sul dispositivo; il link di collegamento lo contiene, quindi non condividerlo.
+
+## Riconoscimento del dispositivo
+L'app riconosce da sola telefono, tablet o computer, tocco o mouse, sistema e app installata: bottoni più grandi al tocco, barra in basso sul telefono, menu compatto sul tablet, calendario a settimana sul computer e a giorno altrove, invito a installare l'app.

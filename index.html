@@ -337,6 +337,19 @@
     .tl-names { width: 78px; } .tl { padding: 14px 12px; border-radius: 16px; }
   }
   @media (prefers-reduced-motion: reduce) { .app, .nav a.nl, .tl-clip { transition: none; } }
+
+  /* adattamento al dispositivo (data-device / data-input impostati da DEVICE) */
+  .syncchip { cursor: pointer; }
+  .syncchip.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--lamp); animation: syncp 1s ease-in-out infinite; }
+  @keyframes syncp { 50% { opacity: .25; } }
+  html[data-input="touch"] kbd, html[data-input="touch"] #kbdHint { display: none; }
+  html[data-input="touch"] button, html[data-input="touch"] select, html[data-input="touch"] input:not([type=checkbox]):not([type=radio]) { min-height: 44px; }
+  html[data-input="touch"] button.sm { padding: 8px 12px; font-size: 13px; }
+  html[data-input="touch"] a.nl, html[data-input="touch"] .cmdk-i { min-height: 44px; }
+  html[data-device="phone"] .page { padding: 14px 14px calc(88px + env(safe-area-inset-bottom, 0px)); }
+  html[data-device="tablet"] .page { padding: 18px 18px 40px; }
+  html[data-standalone="1"] .top { padding-top: max(10px, env(safe-area-inset-top, 0px)); }
+  @media (prefers-reduced-motion: reduce) { .syncchip.busy::before { animation: none; } }
 </style>
 </head><body>
 <div class="app" id="app">
@@ -366,11 +379,65 @@
 <div id="toasts" aria-live="polite"></div>
 <div id="tip" hidden></div>
 <script>
+/* ====================================================================== riconoscimento del dispositivo
+   Legge sistema, browser, tipo (telefono / tablet / computer), tocco o mouse, app installata.
+   Scrive il risultato su <html data-device data-input data-os data-standalone> così CSS e codice
+   si adattano da soli, e si aggiorna se ruoti lo schermo, colleghi un mouse o ridimensioni la finestra. */
+const DEVICE = (() => {
+  const nav = navigator, ua = nav.userAgent || '', uad = nav.userAgentData;
+  const touchPts = nav.maxTouchPoints || 0;
+  const iPadOS = /Macintosh/.test(ua) && touchPts > 1; // iPad che si presenta come Mac
+  const os = /iPhone|iPod/.test(ua) ? 'ios' : (/iPad/.test(ua) || iPadOS) ? 'ipados' : /Android/.test(ua) ? 'android' : /CrOS/.test(ua) ? 'chromeos' : /Windows/.test(ua) ? 'windows' : /Mac/.test(ua) ? 'macos' : /Linux/.test(ua) ? 'linux' : 'altro';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /Firefox|FxiOS/.test(ua) ? 'Firefox' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Chrome|CriOS/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Browser';
+  const OS_NAME = { ios: 'iPhone', ipados: 'iPad', android: 'Android', chromeos: 'Chromebook', windows: 'PC Windows', macos: 'Mac', linux: 'PC Linux', altro: 'Dispositivo' };
+  const d = { os, browser, kind: 'desktop', touch: false, standalone: false, mobileUA: uad ? !!uad.mobile : /Mobi|Android|iPhone|iPod/.test(ua) };
+  d.mac = os === 'macos' || os === 'ios' || os === 'ipados';
+  function measure() {
+    const coarse = matchMedia('(pointer: coarse)').matches, fine = matchMedia('(any-pointer: fine)').matches, hover = matchMedia('(hover: hover)').matches;
+    d.touch = coarse || (touchPts > 0 && !hover);
+    d.hybrid = d.touch && fine && hover; // portatile con touchscreen
+    const short = Math.min(screen.width || innerWidth, screen.height || innerHeight), vw = innerWidth;
+    let kind;
+    if (os === 'ios' || (os === 'android' && (d.mobileUA || short < 600))) kind = 'phone';
+    else if (os === 'ipados' || (os === 'android' && !d.mobileUA)) kind = 'tablet';
+    else if (d.touch && !fine && vw < 900) kind = vw < 600 ? 'phone' : 'tablet';
+    else kind = vw < 600 && d.touch ? 'phone' : 'desktop';
+    d.kind = kind;
+    d.landscape = innerWidth > innerHeight;
+    d.standalone = matchMedia('(display-mode: standalone)').matches || nav.standalone === true;
+    d.label = (kind === 'desktop' && os !== 'macos' && os !== 'windows' && os !== 'linux' && os !== 'chromeos' ? 'Computer' : OS_NAME[os]) + ' · ' + browser;
+    const h = document.documentElement.dataset;
+    h.device = kind; h.input = d.touch ? 'touch' : 'mouse'; h.os = os; h.standalone = d.standalone ? '1' : '0'; h.orient = d.landscape ? 'l' : 'p';
+  }
+  measure();
+  let t; const again = () => { clearTimeout(t); t = setTimeout(() => { const k = d.kind, tc = d.touch; measure(); if (k !== d.kind || tc !== d.touch) window.dispatchEvent(new CustomEvent('devicechange', { detail: d })); }, 120); };
+  addEventListener('resize', again); addEventListener('orientationchange', again);
+  ['(pointer: coarse)', '(any-pointer: fine)', '(display-mode: standalone)'].forEach((q) => { try { matchMedia(q).addEventListener('change', again); } catch { /* ignorato */ } });
+  d.measure = measure;
+  return d;
+})();
+/* invito a installare l'app: Chrome/Edge/Android offrono un evento, iPhone/iPad richiedono "Aggiungi a Home" */
+let installEvt = null;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; window.dispatchEvent(new Event('installready')); });
+addEventListener('appinstalled', () => { installEvt = null; DEVICE.measure(); });
+function installHint() {
+  if (DEVICE.standalone || !/^https?:$/.test(location.protocol)) return null;
+  if (installEvt) return { kind: 'prompt', text: 'Installa Studio Manager su questo dispositivo: si apre come un\'app, anche senza connessione.' };
+  if (DEVICE.os === 'ios' || DEVICE.os === 'ipados') return { kind: 'ios', text: 'Per installarla: tocca Condividi (il quadrato con la freccia) e scegli "Aggiungi alla schermata Home".' };
+  return null;
+}
+async function runInstall() { if (!installEvt) return; installEvt.prompt(); try { await installEvt.userChoice; } catch { /* ignorato */ } installEvt = null; }
+
 /* ====================================================================== icone
    Serie originale sul tema della sala di regia: fader, VU meter, rack, cuffie, microfono.
    Griglia 24 px, tratto 1,6 arrotondato. Gli elementi con classe "ac" (tratto) e "af" (pieno)
    prendono il colore "lampada" (ambra): ogni icona ha una sola nota di colore. */
 const ICON = {
+  sync: '<path d="M20 11a8 8 0 00-14-4.5L4 9M4 13a8 8 0 0014 4.5L20 15"/><path d="M4 4v5h5M20 20v-5h-5"/><circle class="af" cx="12" cy="12" r="1.6"/>',
+  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path class="ac" d="M10.5 18.5h3"/>',
+  tablet: '<rect x="3.5" y="4" width="17" height="16" rx="3"/><path class="ac" d="M11 17h2"/>',
+  laptop: '<rect x="4.5" y="5" width="15" height="10" rx="2"/><path d="M2.5 19h19"/><path class="ac" d="M10.5 17h3"/>',
+  cloud: '<path d="M7 18a4.5 4.5 0 01-.6-8.96A6 6 0 0118 10.5 3.8 3.8 0 0117.5 18z"/><path class="ac" d="M9.5 14.2l2 2 3.5-3.7"/>',
   dashboard: '<rect x="2.5" y="5" width="19" height="14" rx="3.5"/><path d="M6.6 15.6a5.6 5.6 0 0110.8 0"/><path class="ac" d="M12 15.6l3-4.8"/><circle class="af" cx="12" cy="15.6" r="1.5"/>',
   finanza: '<ellipse cx="9" cy="6.5" rx="5.5" ry="2.5"/><path d="M3.5 6.5v4.2c0 1.4 2.5 2.5 5.5 2.5M3.5 10.7v4.2c0 1.4 2.5 2.5 5.5 2.5"/><circle class="ac" cx="16.5" cy="15.5" r="4.5"/><path class="ac" d="M18.3 14.1a2.4 2.4 0 100 2.8M14.7 15h2.8M14.7 16.2h2.5"/>',
   booking: '<rect x="3" y="5" width="18" height="16" rx="3.5"/><path d="M8 3v4M16 3v4M3 10h18"/><circle class="af" cx="12" cy="15.6" r="2.4"/>',
@@ -471,6 +538,10 @@ const store = {
 let dbns = null;
 const loadedCols = new Set();
 const LKEY = (c) => 'studio.v1.' + c;
+/* record eliminati: servono alla sincronizzazione per propagare le cancellazioni agli altri dispositivi */
+let tomb = {};
+try { tomb = JSON.parse(localStorage.getItem('studio.v1.__tomb') || '{}') || {}; } catch { tomb = {}; }
+const saveTomb = () => { try { localStorage.setItem('studio.v1.__tomb', JSON.stringify(tomb)); } catch { /* ignorato */ } };
 
 function notify(col) { storeListeners.forEach((f) => { try { f(col); } catch (e) { console.error(e); } }); }
 function saveLocal(col) { try { localStorage.setItem(LKEY(col), JSON.stringify(mem[col])); } catch { /* storage non disponibile */ } }
@@ -513,6 +584,7 @@ store.put = function (col, rec) {
   rec.updatedAt = Date.now();
   const i = mem[col].findIndex((r) => r.id === rec.id);
   if (i >= 0) mem[col][i] = rec; else mem[col].push(rec);
+  if (tomb[col + '/' + rec.id]) { delete tomb[col + '/' + rec.id]; saveTomb(); }
   if (store.mode === 'db') enqueue(col + '/' + rec.id, () => dbns.collection(col).doc(rec.id).set(strip(rec)));
   else saveLocal(col);
   notify(col);
@@ -521,10 +593,16 @@ store.put = function (col, rec) {
 store.del = function (col, id) {
   const i = mem[col].findIndex((r) => r.id === id);
   if (i >= 0) mem[col].splice(i, 1);
+  if (store.mode !== 'db') { tomb[col + '/' + id] = Date.now(); saveTomb(); }
   if (store.mode === 'db') enqueue(col + '/' + id, () => dbns.collection(col).doc(id).delete());
   else saveLocal(col);
   notify(col);
 };
+
+/* usato dalla sincronizzazione: applica un record arrivato da un altro dispositivo senza cambiarne la data */
+store._apply = function (col, rec) { const i = mem[col].findIndex((r) => r.id === rec.id); if (i >= 0) mem[col][i] = rec; else mem[col].push(rec); delete tomb[col + '/' + rec.id]; };
+store._remove = function (col, id, ts) { const i = mem[col].findIndex((r) => r.id === id); if (i >= 0) mem[col].splice(i, 1); tomb[col + '/' + id] = ts; };
+store._flush = function (cols) { saveTomb(); cols.forEach(saveLocal); cols.forEach(notify); };
 
 async function initStore() {
   let cap = null;
@@ -987,8 +1065,8 @@ function updateChrome() {
   let txt = '', warn = false;
   if (!store.ready) txt = 'Sincronizzazione…';
   else if (store.error) { txt = store.error === 'slow' ? 'Connessione lenta' : 'Dati non raggiungibili'; warn = true; }
-  else if (store.mode === 'local') { txt = 'Dati solo su questo browser'; warn = true; }
-  chip.hidden = !txt; chip.textContent = txt; chip.classList.toggle('warn', warn);
+  else if (store.mode === 'local') { const c = syncChipText(); txt = c.t; warn = !!c.warn; }
+  chip.hidden = !txt; chip.textContent = txt; chip.classList.toggle('warn', warn); chip.classList.toggle('busy', typeof sync !== 'undefined' && sync.state === 'busy');
 }
 store.on((col) => {
   updateChrome();
@@ -1239,7 +1317,7 @@ registerPage('dashboard', {
 });
 function settingsModal() {
   const s = getSettings();
-  modal({ title: 'Dati dello studio', extra: '<button type="button" class="sm" id="bkExp">Scarica copia di sicurezza</button><button type="button" class="sm" id="bkImp">Ripristina da copia</button>', onMount() { $('#bkExp', D).onclick = exportBackup; $('#bkImp', D).onclick = importBackup; }, html: `<div class="fgrid">${fInput('studioName', 'Nome dello studio', s.studioName)}${fInput('vatNumber', 'Partita IVA', s.vatNumber)}${fInput('address', 'Indirizzo', s.address)}${fInput('email', 'Email', s.email)}${fInput('phone', 'Telefono', s.phone)}${fInput('vat', 'Aliquota IVA predefinita (%)', s.vat, 'inputmode="decimal"')}${fInput('bufferMin', 'Pausa tra sessioni nella stessa sala (minuti)', s.bufferMin, 'inputmode="numeric"')}</div>`,
+  modal({ title: 'Dati dello studio', extra: '<button type="button" class="sm" id="bkExp">Scarica copia di sicurezza</button><button type="button" class="sm" id="bkImp">Ripristina da copia</button><button type="button" class="sm" id="bkSync">Sincronizzazione</button>', onMount() { $('#bkExp', D).onclick = exportBackup; $('#bkImp', D).onclick = importBackup; $('#bkSync', D).onclick = () => setTimeout(syncModal, 0); }, html: `<div class="fgrid">${fInput('studioName', 'Nome dello studio', s.studioName)}${fInput('vatNumber', 'Partita IVA', s.vatNumber)}${fInput('address', 'Indirizzo', s.address)}${fInput('email', 'Email', s.email)}${fInput('phone', 'Telefono', s.phone)}${fInput('vat', 'Aliquota IVA predefinita (%)', s.vat, 'inputmode="decimal"')}${fInput('bufferMin', 'Pausa tra sessioni nella stessa sala (minuti)', s.bufferMin, 'inputmode="numeric"')}</div>`,
     onOk(d) { saveSettings({ studioName: d.studioName.trim() || 'Il mio studio', vatNumber: d.vatNumber.trim(), address: d.address.trim(), email: d.email.trim(), phone: d.phone.trim(), vat: num(d.vat, 22), bufferMin: Math.max(0, Math.round(num(d.bufferMin, 0))) }); } });
 }
 
@@ -1537,7 +1615,7 @@ function shiftConflict(sh, ignoreId) {
   return store.all('shifts').find((o) => live(o) && o.id !== ignoreId && o.staffId === sh.staffId && o.date === sh.date && sh.start < o.end && o.start < sh.end);
 }
 
-const calState = { date: today(), view: 'day', roomId: '' };
+const calState = { date: today(), view: DEVICE.kind === 'desktop' && innerWidth > 1100 ? 'week' : 'day', roomId: '' };
 registerPage('booking', {
   label: 'Booking', title: 'Booking', sub: 'Sale, sessioni e turni dei fonici', live: true,
   render(root) {
@@ -2710,6 +2788,158 @@ function buildStagePdf(p) {
   return ctx.doc;
 }
 
+/* ====================================================================== sincronizzazione tra dispositivi
+   Nessun server nostro: i dati viaggiano in un Gist PRIVATO del tuo account GitHub (un solo file JSON).
+   Ogni dispositivo scarica, unisce record per record (vince la modifica più recente; le cancellazioni
+   si propagano) e carica il risultato. Il token resta solo su questo dispositivo.
+   Se l'app gira dentro Claude (archivio condiviso dell'account) la sincronizzazione è già automatica. */
+const SYNC_KEY = 'studio.sync.v1', GIST_FILE = 'studio-manager.json', API = 'https://api.github.com';
+const sync = {
+  cfg: (() => { try { return JSON.parse(localStorage.getItem(SYNC_KEY) || 'null') || {}; } catch { return {}; } })(),
+  state: 'off', // off | idle | busy | error | offline
+  error: '', busy: false, dirty: false, timer: 0, applying: false,
+};
+const syncSave = () => { try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync.cfg)); } catch { /* ignorato */ } };
+sync.linked = () => !!(sync.cfg.token && sync.cfg.gistId);
+sync.cfg.deviceId = sync.cfg.deviceId || uid(); sync.cfg.deviceName = sync.cfg.deviceName || DEVICE.label;
+
+const SYNC_COLS = COLS; // tutte le raccolte, impostazioni dello studio comprese
+function snapshot() {
+  const data = {}; SYNC_COLS.forEach((c) => { data[c] = mem[c]; });
+  return { app: 'studio-manager', v: 2, device: sync.cfg.deviceName, at: Date.now(), data, tomb: { ...tomb } };
+}
+/** Unisce l'archivio remoto in quello locale. Restituisce { changedCols, remoteStale }. */
+function mergeRemote(remote) {
+  const changed = new Set(); let remoteStale = false;
+  const rt = (remote && remote.tomb) || {}, rd = (remote && remote.data) || {};
+  // 1. cancellazioni
+  for (const k of Object.keys(rt)) {
+    const [c, id] = [k.slice(0, k.indexOf('/')), k.slice(k.indexOf('/') + 1)]; if (!mem[c]) continue;
+    const loc = mem[c].find((r) => r.id === id);
+    if (loc && (loc.updatedAt || 0) <= rt[k]) { store._remove(c, id, rt[k]); changed.add(c); }
+    else if (!loc && !(tomb[k] >= rt[k])) tomb[k] = rt[k];
+  }
+  // 2. record
+  for (const c of SYNC_COLS) {
+    const seen = new Set();
+    for (const r of rd[c] || []) {
+      if (!r || !r.id) continue; seen.add(r.id);
+      const k = c + '/' + r.id; if (tomb[k] && tomb[k] >= (r.updatedAt || 0)) { remoteStale = true; continue; }
+      const loc = mem[c].find((x) => x.id === r.id);
+      if (!loc || (r.updatedAt || 0) > (loc.updatedAt || 0)) { store._apply(c, r); changed.add(c); } else if ((loc.updatedAt || 0) > (r.updatedAt || 0)) remoteStale = true;
+    }
+    if (mem[c].some((x) => !seen.has(x.id))) remoteStale = true; // record locali che il remoto non ha ancora
+  }
+  for (const k of Object.keys(tomb)) if (!(k in rt) || rt[k] < tomb[k]) remoteStale = true;
+  return { changed: [...changed], remoteStale };
+}
+
+async function gh(path, opt = {}) {
+  const r = await fetch(API + path, { ...opt, headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + sync.cfg.token, 'X-GitHub-Api-Version': '2022-11-28', ...(opt.body ? { 'Content-Type': 'application/json' } : {}) } });
+  if (!r.ok) { const e = new Error(r.status === 401 ? 'Token non valido o scaduto.' : r.status === 404 ? 'Archivio non trovato: controlla il codice o i permessi del token.' : r.status === 403 || r.status === 429 ? 'GitHub ha limitato le richieste: riprova fra qualche minuto.' : 'Errore GitHub ' + r.status + '.'); e.status = r.status; throw e; }
+  return r.json();
+}
+async function readGist() {
+  const g = await gh('/gists/' + sync.cfg.gistId); const f = g.files && g.files[GIST_FILE]; if (!f) return null;
+  let text = f.content; if (f.truncated || text == null) { const r = await fetch(f.raw_url, { headers: { Authorization: 'Bearer ' + sync.cfg.token } }); text = await r.text(); }
+  return JSON.parse(text);
+}
+const writeGist = (obj) => gh('/gists/' + sync.cfg.gistId, { method: 'PATCH', body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(obj) } } }) });
+async function createGist(token) {
+  sync.cfg.token = token;
+  const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Studio Manager · dati sincronizzati (non modificare a mano)', public: false, files: { [GIST_FILE]: { content: JSON.stringify(snapshot()) } } }) });
+  return g.id;
+}
+
+function setSync(state, error = '') { sync.state = state; sync.error = error; try { updateChrome(); } catch { /* ignorato */ } window.dispatchEvent(new Event('syncstate')); }
+async function runSync(why) {
+  if (!sync.linked() || store.mode === 'db') return;
+  if (sync.busy) { sync.dirty = true; return; }
+  if (!navigator.onLine) return setSync('offline');
+  sync.busy = true; sync.dirty = false; setSync('busy');
+  try {
+    const remote = await readGist(); let stale = true;
+    if (remote) {
+      sync.applying = true; const m = mergeRemote(remote); stale = m.remoteStale || m.changed.length > 0;
+      store._flush(m.changed); sync.applying = false;
+    }
+    if (stale || !remote) await writeGist(snapshot());
+    sync.cfg.last = Date.now(); syncSave(); setSync('idle');
+  } catch (e) { sync.applying = false; setSync(e.status === 401 ? 'error' : navigator.onLine ? 'error' : 'offline', e.message || 'Sincronizzazione non riuscita.'); }
+  finally { sync.busy = false; if (sync.dirty) schedule(1500); }
+}
+function schedule(ms = 3000) { clearTimeout(sync.timer); sync.timer = setTimeout(() => runSync('change'), ms); }
+store.on((col) => { if (!sync.linked() || sync.applying || !store.ready || col === '*') return; schedule(); });
+addEventListener('online', () => runSync('online')); addEventListener('offline', () => { if (sync.linked()) setSync('offline'); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') runSync('visible'); });
+setInterval(() => { if (document.visibilityState === 'visible') runSync('poll'); }, 45000);
+function syncStart() { if (sync.linked() && store.mode !== 'db') { setSync('idle'); runSync('start'); } }
+
+/* ---------- testo di stato ---------- */
+function ago(ts) { if (!ts) return 'mai'; const s = Math.round((Date.now() - ts) / 1000); if (s < 45) return 'adesso'; if (s < 3600) return Math.round(s / 60) + ' min fa'; if (s < 86400) return Math.round(s / 3600) + ' h fa'; return new Date(ts).toLocaleDateString('it-IT'); }
+function syncChipText() {
+  if (store.mode === 'db') return null;
+  if (!sync.linked()) return { t: 'Dati solo su questo dispositivo', warn: true };
+  if (sync.state === 'busy') return { t: 'Sincronizzo…' };
+  if (sync.state === 'offline') return { t: 'Offline · si sincronizza al ritorno', warn: true };
+  if (sync.state === 'error') return { t: 'Sincronizzazione ferma', warn: true };
+  return { t: 'Sincronizzato ' + ago(sync.cfg.last) };
+}
+
+/* ---------- collegamento ---------- */
+const pairCode = () => btoa(JSON.stringify({ t: sync.cfg.token, g: sync.cfg.gistId })).replace(/=+$/, '');
+function parsePair(code) { try { const o = JSON.parse(atob(code.trim().replace(/^.*pair=/, ''))); return o && o.t && o.g ? o : null; } catch { return null; } }
+function pairLink() { return location.href.split('#')[0] + '#pair=' + pairCode(); }
+async function connect(token, gistId) {
+  sync.cfg.token = token.trim();
+  if (gistId) sync.cfg.gistId = gistId; else sync.cfg.gistId = await createGist(token.trim());
+  sync.cfg.last = 0; syncSave();
+  await runSync('connect'); if (sync.state === 'error') { const m = sync.error; sync.cfg.token = ''; sync.cfg.gistId = ''; syncSave(); setSync('off'); throw new Error(m); }
+}
+function disconnect() { sync.cfg.token = ''; sync.cfg.gistId = ''; sync.cfg.last = 0; syncSave(); setSync('off'); }
+
+function syncModal() {
+  const isDb = store.mode === 'db';
+  const hint = installHint();
+  const head = `<p class="small muted" style="margin:0 0 12px">Questo dispositivo: <b>${esc(sync.cfg.deviceName)}</b> (${{ phone: 'telefono', tablet: 'tablet', desktop: 'computer' }[DEVICE.kind]}${DEVICE.touch ? ', touch' : ''}${DEVICE.standalone ? ', app installata' : ''})</p>`;
+  const inst = hint ? `<div class="panel" style="margin-top:12px"><div class="small">${esc(hint.text)}</div>${hint.kind === 'prompt' ? '<div style="margin-top:8px"><button type="button" class="sm" id="syInst">Installa l\'app</button></div>' : ''}</div>` : '';
+  if (isDb) return modal({ title: 'Sincronizzazione', noOk: true, html: head + '<div class="panel"><b>Già attiva.</b><div class="small muted" style="margin-top:4px">I dati sono nell\'archivio del tuo account: ogni dispositivo che apre questa pagina con lo stesso account li vede aggiornati.</div></div>' + inst, onMount() { const b = $('#syInst', D); if (b) b.onclick = runInstall; } });
+  const linked = sync.linked();
+  const body = linked
+    ? `<div class="panel"><b>${sync.state === 'error' ? 'Sincronizzazione ferma' : sync.state === 'offline' ? 'Sei offline' : 'Collegato a GitHub'}</b><div class="small muted" style="margin-top:4px">${sync.state === 'error' ? esc(sync.error) : 'Ultimo aggiornamento: ' + ago(sync.cfg.last) + '. Le modifiche partono da sole pochi secondi dopo ogni salvataggio.'}</div>
+        <div class="row" style="margin-top:10px"><button type="button" class="primary sm" id="syNow">Sincronizza ora</button><button type="button" class="sm" id="syOff">Scollega</button></div></div>
+       <div class="panel" style="margin-top:12px"><b>Aggiungi un altro dispositivo</b><div class="small muted" style="margin:4px 0 8px">Apri questo link sull'altro dispositivo (mandalo a te stesso in un messaggio privato) oppure incolla il codice in "Collega". Contiene il tuo token: non condividerlo con altri.</div>
+        <div class="row"><button type="button" class="sm" id="syLink">Copia il link</button><button type="button" class="sm" id="syCode">Copia il codice</button></div></div>`
+    : `<div class="panel"><b>Collega GitHub</b><div class="small muted" style="margin:4px 0 8px">I dati vengono salvati in un Gist privato del tuo account. Crea un token su <b>github.com → Settings → Developer settings → Personal access tokens (classic)</b> con il solo permesso <b>gist</b>, poi incollalo qui.</div>
+        <div class="field"><label for="syTok">Token GitHub</label><input id="syTok" type="password" autocomplete="off" placeholder="ghp_…"></div>
+        <div class="row" style="margin-top:10px"><button type="button" class="primary sm" id="syNew">Collega e invia i dati</button></div></div>
+       <div class="panel" style="margin-top:12px"><b>Ho già un altro dispositivo collegato</b><div class="small muted" style="margin:4px 0 8px">Incolla il codice o il link copiato dall'altro dispositivo.</div>
+        <div class="field"><label for="syCodeIn">Codice o link</label><input id="syCodeIn" autocomplete="off"></div><div class="row" style="margin-top:10px"><button type="button" class="sm" id="syJoin">Collega questo dispositivo</button></div></div>`;
+  const msg = '<div class="small" id="syMsg" role="status" style="margin-top:10px;color:var(--bad)"></div>';
+  return modal({ title: 'Sincronizzazione', noOk: true, html: head + body + msg + inst,
+    onMount() {
+      const reopen = () => { const ov = D.querySelector('.ov:last-child'); const x = ov && ov.querySelector('[data-close]'); if (x) x.click(); setTimeout(syncModal, 60); };
+      const say = (t) => { $('#syMsg', D).textContent = t || ''; };
+      const on = (id, fn) => { const b = $(id, D); if (b) b.onclick = async () => { b.disabled = true; try { await fn(b); } catch (e) { say(e.message || 'Operazione non riuscita.'); } b.disabled = false; }; };
+      on('#syInst', runInstall);
+      on('#syNow', async () => { await runSync('manual'); say(sync.state === 'error' ? sync.error : ''); if (sync.state === 'idle') toast('Dati sincronizzati.'); });
+      on('#syOff', async () => { if (await confirmBox('Scollegare questo dispositivo? I dati restano qui e su GitHub, ma non si aggiornano più.', 'Scollega')) { disconnect(); toast('Dispositivo scollegato.'); updateChrome(); reopen(); } });
+      const copy = async (t, m) => { try { await navigator.clipboard.writeText(t); toast(m); } catch { prompt0(t); } };
+      const prompt0 = (t) => { say('Copia a mano: ' + t); };
+      on('#syLink', () => copy(pairLink(), 'Link copiato.')); on('#syCode', () => copy(pairCode(), 'Codice copiato.'));
+      on('#syNew', async () => { const t = $('#syTok', D).value.trim(); if (!t) return say('Incolla il token GitHub.'); say(''); await connect(t); toast('Collegato: i dati sono in sincronizzazione.'); reopen(); });
+      on('#syJoin', async () => { const p = parsePair($('#syCodeIn', D).value); if (!p) return say('Codice non valido: copialo di nuovo dall\'altro dispositivo.'); say(''); await connect(p.t, p.g); toast('Dispositivo collegato.'); reopen(); });
+    } });
+}
+
+/* apertura da link di collegamento (#pair=…) */
+function handlePairHash() {
+  const m = /^#pair=(.+)$/.exec(location.hash); if (!m) return;
+  const p = parsePair(m[1]); history.replaceState(null, '', location.pathname + location.search + '#dashboard');
+  if (!p || store.mode === 'db') return;
+  confirmBox(sync.linked() ? 'Collegare questo dispositivo a un altro archivio? Quello attuale verrà sostituito.' : 'Collegare questo dispositivo alla sincronizzazione? I dati si uniranno a quelli già presenti.', 'Collega').then(async (ok) => { if (!ok) return; try { await connect(p.t, p.g); toast('Dispositivo collegato.'); } catch (e) { toast(e.message, true); } });
+}
+
 /* ====================================================================== guscio dell'app: ricerca rapida, menu "Nuovo", menu compatto */
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -2727,6 +2957,7 @@ const ACTIONS = [
   { label: 'Nuova sala', icon: 'planimetria', page: 'booking', tab: ['bookTab', 'risorse'], run: () => roomModal() },
 ];
 const TOOLS = [
+  { label: 'Sincronizzazione tra dispositivi', icon: 'sync', run: () => syncModal() },
   { label: 'Dati dello studio e copie di sicurezza', icon: 'settings', run: () => settingsModal() },
   { label: 'Scarica una copia di sicurezza', icon: 'backup', run: () => exportBackup() },
   { label: 'Cambia tema (automatico, chiaro, scuro)', icon: 'contrast', run: () => $('#themeBtn').click() },
@@ -2800,14 +3031,16 @@ $('.si').innerHTML = icon('search', 18); $('.pi').innerHTML = icon('plus', 18);
 $('#kbdHint').textContent = IS_MAC ? '⌘ K' : 'Ctrl K';
 $('#searchBtn').onclick = cmdOpen; $('#newBtn').onclick = openPop;
 function setCollapsed(c) { $('#app').classList.toggle('collapsed', c); $('#collapseBtn').innerHTML = icon(c ? 'expand' : 'collapse', 20) + '<span>Comprimi il menu</span>'; $('#collapseBtn').setAttribute('aria-label', c ? 'Espandi il menu' : 'Comprimi il menu'); }
-setCollapsed(pref('navCollapsed', false));
+setCollapsed(pref('navCollapsed', DEVICE.kind === 'tablet'));
+window.addEventListener('devicechange', () => { if (localStorage.getItem('studio.pref.navCollapsed') === null) setCollapsed(DEVICE.kind === 'tablet'); });
+$('#syncChip').onclick = () => syncModal();
 $('#collapseBtn').onclick = () => { const c = !$('#app').classList.contains('collapsed'); setPref('navCollapsed', c); setCollapsed(c); };
 D.addEventListener('click', (e) => {
   if (!e.target.closest('#moreBtn')) return;
   const rest = PAGE_ORDER.filter((n) => PAGES[n] && !TAB_MAIN.includes(n));
   const api = modal({ title: 'Altri moduli', noOk: true, html: `<div class="stack">${rest.map((n) => `<a class="cmdk-i" style="text-decoration:none;color:inherit" href="#${n}" data-go><span class="tl2">${icon(n, 20)}</span><span class="tx"><span>${esc(PAGES[n].label)}</span><small>${esc(PAGES[n].sub || '')}</small></span></a>`).join('')}
-    <div class="row"><button type="button" class="sm" data-act="theme">${icon('contrast', 16)} Cambia tema</button><button type="button" class="sm" data-act="set">${icon('settings', 16)} Dati dello studio</button><button type="button" class="sm" data-act="bk">${icon('backup', 16)} Copia di sicurezza</button></div></div>`,
-    onMount(form) { form.addEventListener('click', (ev) => { const g = ev.target.closest('[data-go]'); const a = ev.target.closest('[data-act]'); if (g) setTimeout(() => api.close(), 0); if (a) { api.close(); setTimeout(() => ({ theme: () => $('#themeBtn').click(), set: settingsModal, bk: exportBackup })[a.dataset.act](), 60); } }); } });
+    <div class="row"><button type="button" class="sm" data-act="sync">${icon('sync', 16)} Sincronizza</button><button type="button" class="sm" data-act="theme">${icon('contrast', 16)} Cambia tema</button><button type="button" class="sm" data-act="set">${icon('settings', 16)} Dati dello studio</button><button type="button" class="sm" data-act="bk">${icon('backup', 16)} Copia di sicurezza</button></div></div>`,
+    onMount(form) { form.addEventListener('click', (ev) => { const g = ev.target.closest('[data-go]'); const a = ev.target.closest('[data-act]'); if (g) setTimeout(() => api.close(), 0); if (a) { api.close(); setTimeout(() => ({ theme: () => $('#themeBtn').click(), set: settingsModal, bk: exportBackup, sync: syncModal })[a.dataset.act](), 60); } }); } });
 });
 
 /* ====================================================================== avvio */
@@ -2816,8 +3049,9 @@ D.addEventListener('click', (e) => {
   applyTheme(themeMode());
   $('#themeBtn').onclick = () => { const order = ['system', 'light', 'dark']; const n = order[(order.indexOf(themeMode()) + 1) % 3]; try { localStorage.setItem(THEME_KEY, n); } catch { /* ignorato */ } applyTheme(n); };
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode() === 'system') applyTheme('system'); });
-  window.addEventListener('hashchange', mountPage);
-  initStore().then(() => { updateChrome(); mountPage(); });
+  const pairing = /^#pair=/.test(location.hash);
+  window.addEventListener('hashchange', () => { if (!/^#pair=/.test(location.hash)) mountPage(); });
+  initStore().then(() => { updateChrome(); mountPage(); syncStart(); if (pairing) handlePairHash(); });
   mountPage();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
